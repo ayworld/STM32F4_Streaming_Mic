@@ -1,0 +1,30 @@
+# Setting up
+
+## Extract lwip
+cd lib/ChibiOS/ext
+p7zip -d lwip-1.4.1_patched.7z
+cd -
+
+# WORKING
+
+# From root openocd
+openocd -f board/stm32f4discovery.cfg
+
+# In another terminal 
+arm-none-eabi-gdb -x utils/gdb_openocd.cfg
+
+
+
+# FIRST TIME SETUPS - DEBUGGING
+
+# Be able to run minicom as user
+sudo adduser $USER dialout
+
+# Serial Port Parameters (run as root if you want to save config)
+Serial Device /dev/ttyUSB0 (if using FTDI, check with dmesg | grep FTDI)
+Bps 38400 8N1
+Save setup as <stm32>
+
+When running next time, can use minicom <stm32> to load.
+
+
