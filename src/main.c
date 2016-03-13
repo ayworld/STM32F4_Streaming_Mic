@@ -81,8 +81,9 @@ int main(void)
     PRINT("Main is running",0);
 
 
-
+#if 0
     lan8720Init();
+#endif
     
     chThdCreateStatic(waThread1, sizeof(waThread1), NORMALPRIO, Thread1, NULL);
 

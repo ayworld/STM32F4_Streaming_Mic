@@ -29,7 +29,7 @@
 #include "ch.h"
 #include "hal.h"
 #include "project.h"
-#include "arm_math.h"
+#include "autogen_fir_coeffs.h"
 
 /* I2S Setup:
  * Designed to 1 bit sample the MP45DT02 at 1024 kHz, with factor 64 decimation
@@ -59,6 +59,23 @@
  *      PLL is set to operate at 8 MHz / 8= 1 MHz*/
 
 /*
+ * 1024 kHz of I2S samples
+ * 10 ms of samples:
+ *  I2S buffer to hold 10240 bits (640 uint16_t's)
+ * 
+ * But we will be given interrupts every 5ms:
+ *  So 5120 bits/ 320 uint16_t's provided in 5ms
+ *
+ *  Need to extrapolate this data into floats, each float is 1 bit:
+ *      5120 floats
+ *
+ *  Need to decimate this, factor = 64
+ *      80 floats output (80 * 200 == 16000)
+ *
+ */
+
+
+/*
 https://github.com/rowol/stm32_discovery_arm_gcc/blob/7f565a4b02d2adb3d05d05055fad6f0b4c899bf2/STM32F4-Discovery_FW_V1.1.0/Project/Audio_playback_and_record/src/waverecorder.c
 */
 
@@ -79,39 +96,47 @@ https://github.com/rowol/stm32_discovery_arm_gcc/blob/7f565a4b02d2adb3d05d05055f
 #define MP45DT02_I2S_SAMPLE_SIZE_BITS       (MP45DT02_RAW_FREQ_KHZ * MP45DT02_RAW_SAMPLE_DURATION_MS)
 #define MP45DT02_I2S_BUFFER_SIZE_2B         (MP45DT02_I2S_SAMPLE_SIZE_BITS / MP45DT02_I2S_WORD_SIZE_BITS)
 
+/* Number of times interrupts are called when filling the buffer. 
+ * ChibiOS fires twice half full / full */
+#define MP45DT02_INTERRUPTS_PER_BUFFER      2
+
 /* Every bit in I2S signal needs to be expanded out into a word. */
 /* Note: I2S Interrupts are always fired at half/full buffer point. Thus
  * processed buffers require to be 0.5 * bits in one I2S buffer */
-#define MP45DT02_EXTRAPOLATED_BUFFER_SIZE   (MP45DT02_I2S_SAMPLE_SIZE_BITS/2)
+#define MP45DT02_EXTRAPOLATED_BUFFER_SIZE   (MP45DT02_I2S_SAMPLE_SIZE_BITS/MP45DT02_INTERRUPTS_PER_BUFFER) /* AB TODO - 2 since buffer only half full  need to clean up defines..*/
 
-#define MP45DT02_FIR_OUPUT_BUFFER_SIZE_2B   (MP45DT02_EXTRAPOLATED_BUFFER_SIZE/ MP45DT02_FIR_DECIMATION_FACTOR)
+
 #define MP45DT02_FIR_DECIMATION_FACTOR      64
-#define MP45DT02_FIR_TAPS                   128
+#define MP45DT02_FIR_OUPUT_BUFFER_SIZE   (MP45DT02_EXTRAPOLATED_BUFFER_SIZE/ MP45DT02_FIR_DECIMATION_FACTOR)
+
 
 static thread_t * pMp45dt02ProcessingThd;
 static THD_WORKING_AREA(mp45dt02ProcessingThdWA, 256);
 static semaphore_t mp45dt02ProcessingSem;
 
-static uint16_t mp45dt02I2sBuffer[MP45DT02_I2S_BUFFER_SIZE_2B];
-
-static uint16_t mp45dt02CopyBuffer[MP45DT02_I2S_BUFFER_SIZE_2B];
-static uint32_t mp45dt02CopyBufferSize = 0;
+static struct {
+    uint32_t offset;
+    uint32_t number;
+    uint16_t buffer[MP45DT02_I2S_BUFFER_SIZE_2B];
+    uint64_t guard;
+} mp45dt02I2sData;
 
 /* AB TODO better name. Holds DSP words with 1 bit samples. */
 static float32_t mp45dt02ExtrapolatedBuffer[MP45DT02_EXTRAPOLATED_BUFFER_SIZE];
 static uint32_t mp45dt02ExtrapolatedBufferSize = 0;
 
-static float32_t mp45dt02DecimatedBuffer[MP45DT02_FIR_OUPUT_BUFFER_SIZE_2B*64];
+static float32_t mp45dt02DecimatedBuffer[MP45DT02_FIR_OUPUT_BUFFER_SIZE];
 static uint32_t mp45dt02DecimatedBufferSize = 0;
 
 static I2SConfig mp45dt02I2SConfig;
 
-static time_measurement_t measuredtime;
+static time_measurement_t decimateTime;
+static time_measurement_t extrapolationTime;
+static time_measurement_t callbackTime;
 
 static struct {
     arm_fir_decimate_instance_f32 decimateInstance;
-    float32_t coefficients[MP45DT02_FIR_TAPS];
-    float32_t state[MP45DT02_FIR_TAPS + MP45DT02_EXTRAPOLATED_BUFFER_SIZE - 1];
+    float32_t state[FIR_COEFFS_LEN + MP45DT02_EXTRAPOLATED_BUFFER_SIZE - 1];
     uint32_t guard;
 } cmsisDsp;
 
@@ -129,8 +154,10 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
     {
         chSemWait(&mp45dt02ProcessingSem);
 
+        chTMStartMeasurementX(&extrapolationTime);
+
         memset(mp45dt02ExtrapolatedBuffer, 0, sizeof(mp45dt02ExtrapolatedBuffer));
-        mp45dt02ExtrapolatedBufferSize = mp45dt02CopyBufferSize * MP45DT02_I2S_WORD_SIZE_BITS;
+        mp45dt02ExtrapolatedBufferSize = mp45dt02I2sData.number * MP45DT02_I2S_WORD_SIZE_BITS;
 
         if (mp45dt02ExtrapolatedBufferSize > MP45DT02_EXTRAPOLATED_BUFFER_SIZE)
         {
@@ -152,13 +179,22 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
          * and this we populate the end of the array first. */
 
         for(i=0, extrapolatedIndex = 0, bitsInWord = MP45DT02_I2S_WORD_SIZE_BITS;
-            i < mp45dt02CopyBufferSize * MP45DT02_I2S_WORD_SIZE_BITS; i++)
+            i < mp45dt02I2sData.number * MP45DT02_I2S_WORD_SIZE_BITS; i++)
         {
+            uint16_t modifiedCurrentWord = 0;
+
+            if (i % MP45DT02_I2S_WORD_SIZE_BITS)
+            {
+                modifiedCurrentWord = 
+                    mp45dt02I2sData.buffer[mp45dt02I2sData.offset +
+                                           i/MP45DT02_I2S_WORD_SIZE_BITS];
+            }
+
             /* bitsInWord only ever changed for final pass */
-            if ((mp45dt02CopyBufferSize * MP45DT02_I2S_WORD_SIZE_BITS - i < MP45DT02_I2S_WORD_SIZE_BITS
+            if ((mp45dt02I2sData.number * MP45DT02_I2S_WORD_SIZE_BITS - i < MP45DT02_I2S_WORD_SIZE_BITS
                  && bitsInWord != MP45DT02_I2S_WORD_SIZE_BITS))
             {
-                bitsInWord = mp45dt02CopyBufferSize * MP45DT02_I2S_WORD_SIZE_BITS - i;
+                bitsInWord = mp45dt02I2sData.number * MP45DT02_I2S_WORD_SIZE_BITS - i;
                 PRINT("bitsInWord is set to %u", bitsInWord);
             }
 
@@ -173,40 +209,19 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
             }
 
             mp45dt02ExtrapolatedBuffer[extrapolatedIndex] = 
-                (mp45dt02CopyBuffer[i/MP45DT02_I2S_WORD_SIZE_BITS] & 0x0001) * UINT16_MAX;
+                (modifiedCurrentWord & 0x0001) * UINT16_MAX;
 
-            mp45dt02CopyBuffer[i/MP45DT02_I2S_WORD_SIZE_BITS] >>= 1;
+            modifiedCurrentWord >>= 1;
         }
 
-#if 1
-        i2sStopExchange(&MP45DT02_I2S_DRIVER);
-        PRINT("Extrapolated Buffer Contents. Buffer Size %u Last Index %u", mp45dt02ExtrapolatedBufferSize, extrapolatedIndex);
-        for (i=0; i<mp45dt02ExtrapolatedBufferSize; i+=8)
-        {
-            PRINT("[%06u] %u %u %u %u %u %u %u %u", 
-                   i,
-                   (uint32_t)mp45dt02ExtrapolatedBuffer[i+0],
-                   (uint32_t)mp45dt02ExtrapolatedBuffer[i+1],
-                   (uint32_t)mp45dt02ExtrapolatedBuffer[i+2],
-                   (uint32_t)mp45dt02ExtrapolatedBuffer[i+3],
-                   (uint32_t)mp45dt02ExtrapolatedBuffer[i+4],
-                   (uint32_t)mp45dt02ExtrapolatedBuffer[i+5],
-                   (uint32_t)mp45dt02ExtrapolatedBuffer[i+6],
-                   (uint32_t)mp45dt02ExtrapolatedBuffer[i+7]);
-        }
-        while (1)
-        {
-            LED_BLUE_TOGGLE();
-            chThdSleepMilliseconds(500);
-        }
-#endif
+        chTMStopMeasurementX(&extrapolationTime);
 
         if (chThdShouldTerminateX())
         {
             /* exit */
         }
 
-        chTMStartMeasurementX(&measuredtime);
+        chTMStartMeasurementX(&decimateTime);
 #if 1
         /* Do DSP */
         arm_fir_decimate_f32(&cmsisDsp.decimateInstance, 
@@ -214,13 +229,21 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
                              mp45dt02DecimatedBuffer, 
                              MP45DT02_EXTRAPOLATED_BUFFER_SIZE);
 #endif
-        chTMStopMeasurementX(&measuredtime);
-#if 0
-        while (1)
+        chTMStopMeasurementX(&decimateTime);
+
+
+#if 1   
+        static uint32_t abortCount = 0;
+        if (abortCount == 5)
         {
-            LED_BLUE_TOGGLE();
-            chThdSleepMilliseconds(500);
+            i2sStopExchange(&MP45DT02_I2S_DRIVER);
+            while (1)
+            {
+                LED_BLUE_TOGGLE();
+                chThdSleepMilliseconds(500);
+            }
         }
+        abortCount++;
 #endif
 
 
@@ -236,19 +259,27 @@ void HardFault_Handler(void) {
 }
 
 /* (*i2scallback_t) */
-static void mp45dt02Cb(I2SDriver *i2sp, size_t offset, size_t n)
+static void mp45dt02Cb(I2SDriver *i2sp, size_t offset, size_t number)
 {
     (void)i2sp;
 
     /* offset - of data in buffer 
      * n - amount of data */
+    /* AB TODO I would expect n to always be 320, and offset to alternate between 0 and
+     * 320 - but it doesnt seem to */
+
+    chTMStartMeasurementX(&callbackTime);
+
     chSysLockFromISR();
-    mp45dt02CopyBufferSize = n;
-    /* AB TODO only using half of copy buffer. Either proerly use offset of
-     * half. */
-    memcpy(mp45dt02CopyBuffer, &mp45dt02I2sBuffer[offset], n * sizeof(mp45dt02CopyBuffer[0]));
+
+    mp45dt02I2sData.offset = offset;
+    mp45dt02I2sData.number = number;
+
     chSemSignalI(&mp45dt02ProcessingSem);
+
     chSysUnlockFromISR();
+
+    chTMStopMeasurementX(&callbackTime);
 }
 
 void dspInit(void)
@@ -260,9 +291,9 @@ void dspInit(void)
 
 #if 1
     if (ARM_MATH_SUCCESS != (armStatus = arm_fir_decimate_init_f32(&cmsisDsp.decimateInstance,
-                                                                   MP45DT02_FIR_TAPS,
+                                                                   FIR_COEFFS_LEN,
                                                                    MP45DT02_FIR_DECIMATION_FACTOR, 
-                                                                   cmsisDsp.coefficients, 
+                                                                   firCoeffs, 
                                                                    cmsisDsp.state,
                                                                    MP45DT02_EXTRAPOLATED_BUFFER_SIZE)))
     {
@@ -273,49 +304,13 @@ void dspInit(void)
 
 void mp45dt02Init(void)
 {
-
-#if 0
-    float f[10]   = {0};
-    q31_t q31[10] = {0};
-    q15_t q15[10] = {0};
-    int i = 0;
-    int x = 0;
-
-    i = 4;
-    f[0] = -0.00041362714814920705647;
-    f[1] = 0.00016298124238557645739;
-    f[2] = 0.00015708385141696001993;
-    f[3] = -0.00037065400030980772718;
-
-    arm_float_to_q15(f, q15, i);
-
-    for (x = 0; x<i; x++)
-    {
-        PRINT("For F %f Q is %x", f[x], q15[x]);
-    }
-
-    arm_float_to_q31(f, q31, i);
-
-    for (x = 0; x<i; x++)
-    {
-        PRINT("For F %f Q is %x", f[x], q31[x]);
-    }
-
-
-    while(1);
-#endif
-
-
-
     PRINT("Initialising mp45dt02.\n\r"
-          "mp45dt02I2sBuffer size: %u words %u bytes\n\r"
-          "mp45dt02CopyBuffer size: %u words %u bytes\n\r"
+          "mp45dt02I2sData.buffer size: %u words %u bytes\n\r"
           "mp45dt02ExtrapolatedBuffer size: %u words %u bytes\n\r"
-          "MP45DT02_FIR_OUPUT_BUFFER_SIZE_2B: %u",
-          MP45DT02_I2S_BUFFER_SIZE_2B, sizeof(mp45dt02I2sBuffer),
-          MP45DT02_I2S_BUFFER_SIZE_2B, sizeof(mp45dt02CopyBuffer),
+          "MP45DT02_FIR_OUPUT_BUFFER_SIZE: %u",
+          MP45DT02_I2S_BUFFER_SIZE_2B, sizeof(mp45dt02I2sData.buffer),
           MP45DT02_EXTRAPOLATED_BUFFER_SIZE, sizeof(mp45dt02ExtrapolatedBuffer),
-          MP45DT02_FIR_OUPUT_BUFFER_SIZE_2B);
+          MP45DT02_FIR_OUPUT_BUFFER_SIZE);
 
     chSemObjectInit(&mp45dt02ProcessingSem, 0);
 
@@ -325,7 +320,9 @@ void mp45dt02Init(void)
                                                mp45dt02ProcessingThd, NULL);
 
     dspInit();
-    chTMObjectInit(&measuredtime);
+    chTMObjectInit(&decimateTime);
+    chTMObjectInit(&extrapolationTime);
+    chTMObjectInit(&callbackTime);
 
     memset(&mp45dt02I2SConfig, 0, sizeof(mp45dt02I2SConfig));
 
@@ -340,12 +337,12 @@ void mp45dt02Init(void)
                   PAL_STM32_OSPEED_HIGHEST); /* TODO Speed */
 
     mp45dt02I2SConfig.tx_buffer = NULL;
-    mp45dt02I2SConfig.rx_buffer = mp45dt02I2sBuffer;
-    mp45dt02I2SConfig.size = MP45DT02_I2S_BUFFER_SIZE_2B;
-    mp45dt02I2SConfig.end_cb = mp45dt02Cb;
-    mp45dt02I2SConfig.i2scfgr = SPI_I2SCFGR_I2SSTD_1 | SPI_I2SCFGR_CKPOL;
-    mp45dt02I2SConfig.i2spr = (SPI_I2SPR_I2SDIV & MP45DT02_I2SDIV) |
-                              (SPI_I2SPR_ODD & (MP45DT02_I2SODD << I2SODD_SHIFT));
+    mp45dt02I2SConfig.rx_buffer = mp45dt02I2sData.buffer;
+    mp45dt02I2SConfig.size      = MP45DT02_I2S_BUFFER_SIZE_2B;
+    mp45dt02I2SConfig.end_cb    = mp45dt02Cb;
+    mp45dt02I2SConfig.i2scfgr   = SPI_I2SCFGR_I2SSTD_1 | SPI_I2SCFGR_CKPOL;
+    mp45dt02I2SConfig.i2spr     = (SPI_I2SPR_I2SDIV & MP45DT02_I2SDIV) |
+                                  (SPI_I2SPR_ODD & (MP45DT02_I2SODD << I2SODD_SHIFT));
     
     i2sStart(&MP45DT02_I2S_DRIVER, &mp45dt02I2SConfig);
     i2sStartExchange(&MP45DT02_I2S_DRIVER);

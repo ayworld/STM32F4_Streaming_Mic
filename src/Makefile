@@ -121,8 +121,9 @@ CSRC = $(STARTUPSRC) \
        $(LWSRC) \
        $(CMSIS)/DSP_Lib/Source/FilteringFunctions/arm_fir_decimate_init_f32.c \
        $(CMSIS)/DSP_Lib/Source/FilteringFunctions/arm_fir_decimate_f32.c \
-       main.c                    \
        mp45dt02.c                \
+       autogen_fir_coeffs.c      \
+       main.c                    \
        lan8720.c  
 
 
