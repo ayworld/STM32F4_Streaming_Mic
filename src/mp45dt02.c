@@ -89,10 +89,11 @@ https://github.com/rowol/stm32_discovery_arm_gcc/blob/7f565a4b02d2adb3d05d05055f
 #define I2SODD_SHIFT                        8
 
 #define MP45DT02_RAW_FREQ_KHZ               1024
-#define MP45DT02_RAW_SAMPLE_DURATION_MS     10
+/* One raw sample provided to processing.*/
+#define MP45DT02_RAW_SAMPLE_DURATION_MS     2 
 
 #define MP45DT02_I2S_WORD_SIZE_BITS         16
-#define MP45DT02_I2S_SAMPLE_SIZE_BITS       (MP45DT02_RAW_FREQ_KHZ * MP45DT02_RAW_SAMPLE_DURATION_MS)
+#define MP45DT02_I2S_SAMPLE_SIZE_BITS       (MP45DT02_RAW_FREQ_KHZ * MP45DT02_RAW_SAMPLE_DURATION_MS * MP45DT02_INTERRUPTS_PER_BUFFER)
 #define MP45DT02_I2S_BUFFER_SIZE_2B         (MP45DT02_I2S_SAMPLE_SIZE_BITS / MP45DT02_I2S_WORD_SIZE_BITS)
 
 /* Number of times interrupts are called when filling the buffer.
@@ -106,7 +107,13 @@ https://github.com/rowol/stm32_discovery_arm_gcc/blob/7f565a4b02d2adb3d05d05055f
 
 
 #define MP45DT02_FIR_DECIMATION_FACTOR      64
-#define MP45DT02_FIR_OUPUT_BUFFER_SIZE      (MP45DT02_EXTRAPOLATED_BUFFER_SIZE/ MP45DT02_FIR_DECIMATION_FACTOR)
+#define MP45DT02_DECIMATED_BUFFER_SIZE      (MP45DT02_EXTRAPOLATED_BUFFER_SIZE/ MP45DT02_FIR_DECIMATION_FACTOR)
+
+#define MP45DT02_OUTPUT_BUFFER_DURATION_MS  50
+
+#define MP45DT02_OUTPUT_BUFFER_SIZE         (MP45DT02_DECIMATED_BUFFER_SIZE    * \
+                                             MP45DT02_OUTPUT_BUFFER_DURATION_MS/ \
+                                             MP45DT02_RAW_SAMPLE_DURATION_MS)
 
 #define MEMORY_GUARD                        0xDEADBEEF
 
@@ -118,14 +125,14 @@ static struct {
     uint32_t offset;
     uint32_t number;
     uint16_t buffer[MP45DT02_I2S_BUFFER_SIZE_2B];
-    uint64_t guard;
+    uint32_t guard;
 } mp45dt02I2sData;
 
 /* AB TODO better name. Holds DSP words with 1 bit samples. */
 static float32_t mp45dt02ExtrapolatedBuffer[MP45DT02_EXTRAPOLATED_BUFFER_SIZE];
 static uint32_t mp45dt02ExtrapolatedBufferSize = 0;
 
-static float32_t mp45dt02DecimatedBuffer[MP45DT02_FIR_OUPUT_BUFFER_SIZE];
+static float32_t mp45dt02DecimatedBuffer[MP45DT02_DECIMATED_BUFFER_SIZE];
 static uint32_t mp45dt02DecimatedBufferSize = 0;
 
 static I2SConfig mp45dt02I2SConfig;
@@ -142,6 +149,12 @@ static struct {
     float32_t state[FIR_COEFFS_LEN + MP45DT02_EXTRAPOLATED_BUFFER_SIZE - 1];
     uint32_t guard;
 } cmsisDsp;
+
+static struct {
+    uint32_t count;
+    float32_t buffer[MP45DT02_OUTPUT_BUFFER_SIZE];
+    uint32_t guard;
+} output;
 
 static THD_FUNCTION(mp45dt02ProcessingThd, arg)
 {
@@ -183,7 +196,8 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
          * and this we populate the end of the array first. */
 
         for(i=0, extrapolatedIndex = 0, bitsInWord = MP45DT02_I2S_WORD_SIZE_BITS;
-            i < mp45dt02I2sData.number * MP45DT02_I2S_WORD_SIZE_BITS; i++)
+            i < mp45dt02I2sData.number * MP45DT02_I2S_WORD_SIZE_BITS;
+            i++)
         {
             uint16_t modifiedCurrentWord = 0;
 
@@ -238,8 +252,14 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
         chTMStopMeasurementX(&debugTimings.decimate);
 
 #if 1
-        static uint32_t abortCount = 0;
-        if (abortCount == 5)
+        memcpy(&output.buffer[output.count * MP45DT02_DECIMATED_BUFFER_SIZE],
+               mp45dt02DecimatedBuffer,
+               MP45DT02_DECIMATED_BUFFER_SIZE);
+
+        output.count++;
+
+        if (output.count == MP45DT02_OUTPUT_BUFFER_DURATION_MS / 
+                            MP45DT02_RAW_SAMPLE_DURATION_MS)
         {
             i2sStopExchange(&MP45DT02_I2S_DRIVER);
             while (1)
@@ -248,7 +268,6 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
                 chThdSleepMilliseconds(500);
             }
         }
-        abortCount++;
 #endif
 
         /* Transmit */
@@ -257,10 +276,7 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
     }
 }
 void HardFault_Handler(void) {
-/*lint -restore*/
-
-  while (true) {
-  }
+  while (true);
 }
 
 /* (*i2scallback_t) */
@@ -303,10 +319,10 @@ void mp45dt02Init(void)
     PRINT("Initialising mp45dt02.\n\r"
           "mp45dt02I2sData.buffer size: %u words %u bytes\n\r"
           "mp45dt02ExtrapolatedBuffer size: %u words %u bytes\n\r"
-          "MP45DT02_FIR_OUPUT_BUFFER_SIZE: %u",
+          "MP45DT02_DECIMATED_BUFFER_SIZE: %u",
           MP45DT02_I2S_BUFFER_SIZE_2B, sizeof(mp45dt02I2sData.buffer),
           MP45DT02_EXTRAPOLATED_BUFFER_SIZE, sizeof(mp45dt02ExtrapolatedBuffer),
-          MP45DT02_FIR_OUPUT_BUFFER_SIZE);
+          MP45DT02_DECIMATED_BUFFER_SIZE);
 
     chSemObjectInit(&mp45dt02ProcessingSem, 0);
 
@@ -326,6 +342,8 @@ void mp45dt02Init(void)
 
     memset(&mp45dt02I2sData, 0, sizeof(mp45dt02I2sData));
     mp45dt02I2sData.guard = MEMORY_GUARD;
+
+    output.guard = MEMORY_GUARD;
 
     /* ALAN TODO - move pin setup to board.h */
     palSetPadMode(MP45DT02_PDM_PORT, MP45DT02_PDM_PAD,
