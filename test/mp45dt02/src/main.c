@@ -43,9 +43,6 @@ static THD_FUNCTION(Thread1, arg)
 }
 
 
-/*
- * Application entry point.
- */
 int main(void) 
 {
     halInit();
@@ -54,20 +51,9 @@ int main(void)
 
     PRINT("Main is running",0);
 
-
     chThdCreateStatic(waThread1, sizeof(waThread1), NORMALPRIO, Thread1, NULL);
 
     mp45dt02Init();
-
-    RCC->CFGR = (RCC->CFGR & ~(0x1F<<27)) |
-                1<<30 |
-                5<<27;
-    PRINT("RCC REG IS %x", RCC->CFGR);
-    /* output PLLI2S to PC9 MCO2*/
-    palSetPadMode(GPIOC, 9,
-                  PAL_MODE_ALTERNATE(0) |
-                  PAL_STM32_OTYPE_PUSHPULL |
-                  PAL_STM32_OSPEED_HIGHEST);
 
     while(1)
     {

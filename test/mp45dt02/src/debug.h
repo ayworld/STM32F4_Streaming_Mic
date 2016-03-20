@@ -38,7 +38,7 @@ void debugSerialPrint(const char * fmt, ...);
 #define PRINT(FMT, ...)                                                     \
         debugSerialPrint("(%s:%d) " FMT "\n\r", __FILE__, __LINE__, __VA_ARGS__)  
 #else
-#define PRINT(FMT, ...) _PRINT(FMT, ...)
+#define PRINT(FMT, ...)
 #endif
 
 #define PRINT_ERROR(FMT, ...)\

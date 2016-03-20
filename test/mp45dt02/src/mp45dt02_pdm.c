@@ -363,6 +363,18 @@ void mp45dt02Init(void)
     mp45dt02I2SConfig.i2spr     = (SPI_I2SPR_I2SDIV & MP45DT02_I2SDIV) |
                                   (SPI_I2SPR_ODD & (MP45DT02_I2SODD << I2SODD_SHIFT));
 
+    RCC->CFGR = (RCC->CFGR & ~(0x1F<<27)) |
+                1<<30 |
+                5<<27;
+
+    /* output PLLI2S to PC9 MCO2*/
+    palSetPadMode(GPIOC, 9,
+                  PAL_MODE_ALTERNATE(0) |
+                  PAL_STM32_OTYPE_PUSHPULL |
+                  PAL_STM32_OSPEED_HIGHEST);
+
+
+
     i2sStart(&MP45DT02_I2S_DRIVER, &mp45dt02I2SConfig);
     i2sStartExchange(&MP45DT02_I2S_DRIVER);
 }
