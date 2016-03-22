@@ -5,7 +5,7 @@
 
 # Compiler options here.
 ifeq ($(USE_OPT),)
-  USE_OPT = -O2 -ggdb3 -fomit-frame-pointer -falign-functions=16
+  USE_OPT = -O0 -ggdb3 -fomit-frame-pointer -falign-functions=16
 endif
 
 # C specific options here (added to USE_OPT).
@@ -83,7 +83,7 @@ endif
 #
 
 # Define project name here
-PROJECT = stm32_eth_mic
+PROJECT = test
 
 # Imported source files and paths
 CHIBIOS = ../../../lib/ChibiOS

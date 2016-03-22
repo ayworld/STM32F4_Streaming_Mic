@@ -109,7 +109,7 @@ https://github.com/rowol/stm32_discovery_arm_gcc/blob/7f565a4b02d2adb3d05d05055f
 #define MP45DT02_FIR_DECIMATION_FACTOR      64
 #define MP45DT02_DECIMATED_BUFFER_SIZE      (MP45DT02_EXTRAPOLATED_BUFFER_SIZE/ MP45DT02_FIR_DECIMATION_FACTOR)
 
-#define MP45DT02_OUTPUT_BUFFER_DURATION_MS  50
+#define MP45DT02_OUTPUT_BUFFER_DURATION_MS  1000
 
 #define MP45DT02_OUTPUT_BUFFER_SIZE         (MP45DT02_DECIMATED_BUFFER_SIZE    * \
                                              MP45DT02_OUTPUT_BUFFER_DURATION_MS/ \
@@ -142,6 +142,7 @@ static struct {
     time_measurement_t extrapolation;
     time_measurement_t callback;
     time_measurement_t totalProcessing;
+    time_measurement_t oneSecond;
 } debugTimings;
 
 static struct {
@@ -172,6 +173,10 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
 
         chTMStartMeasurementX(&debugTimings.totalProcessing);
         chTMStartMeasurementX(&debugTimings.extrapolation);
+
+        /**********************************************************************/ 
+        /* Getting I2S data to a useful format                                */
+        /**********************************************************************/ 
 
         memset(mp45dt02ExtrapolatedBuffer, 0, sizeof(mp45dt02ExtrapolatedBuffer));
         mp45dt02ExtrapolatedBufferSize = mp45dt02I2sData.number * MP45DT02_I2S_WORD_SIZE_BITS;
@@ -230,7 +235,7 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
             }
 
             mp45dt02ExtrapolatedBuffer[extrapolatedIndex] =
-                (modifiedCurrentWord & 0x0001) * UINT16_MAX;
+                (modifiedCurrentWord & 0x0001) * UINT16_MAX - (INT16_MAX+1);
 
             modifiedCurrentWord >>= 1;
         }
@@ -244,39 +249,59 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
 
         chTMStartMeasurementX(&debugTimings.decimate);
 
-        /* Do DSP */
+        /**********************************************************************/ 
+        /* Filtering */
+        /**********************************************************************/ 
         arm_fir_decimate_f32(&cmsisDsp.decimateInstance,
                              mp45dt02ExtrapolatedBuffer,
                              mp45dt02DecimatedBuffer,
                              MP45DT02_EXTRAPOLATED_BUFFER_SIZE);
+
+        /**********************************************************************/ 
+        /* Handling Output */
+        /**********************************************************************/ 
         chTMStopMeasurementX(&debugTimings.decimate);
 
-#if 1
         memcpy(&output.buffer[output.count * MP45DT02_DECIMATED_BUFFER_SIZE],
                mp45dt02DecimatedBuffer,
-               MP45DT02_DECIMATED_BUFFER_SIZE);
+               sizeof(mp45dt02DecimatedBuffer));
 
         output.count++;
 
+        chTMStopMeasurementX(&debugTimings.totalProcessing);
+
+        /**********************************************************************/ 
+        /* Pause Condition */
+        /**********************************************************************/ 
         if (output.count == MP45DT02_OUTPUT_BUFFER_DURATION_MS / 
                             MP45DT02_RAW_SAMPLE_DURATION_MS)
         {
             i2sStopExchange(&MP45DT02_I2S_DRIVER);
+
             while (1)
             {
                 LED_BLUE_TOGGLE();
-                chThdSleepMilliseconds(500);
+
+                chTMStartMeasurementX(&debugTimings.oneSecond);
+                chThdSleepMilliseconds(1000);
+                chTMStopMeasurementX(&debugTimings.oneSecond);
+
+                if (palReadPad(GPIOA, GPIOA_BUTTON))
+                {
+                    LED_BLUE_CLEAR();
+                    memset(&output, 0, sizeof(output));
+                    i2sStartExchange(&MP45DT02_I2S_DRIVER);
+                    break;
+                }
             }
         }
-#endif
-
-        /* Transmit */
-
-        chTMStopMeasurementX(&debugTimings.totalProcessing);
     }
 }
-void HardFault_Handler(void) {
-  while (true);
+
+void HardFault_Handler(void) 
+{
+    LED_RED_SET();
+    while (true);
 }
 
 /* (*i2scallback_t) */
@@ -337,6 +362,7 @@ void mp45dt02Init(void)
     chTMObjectInit(&debugTimings.extrapolation);
     chTMObjectInit(&debugTimings.callback);
     chTMObjectInit(&debugTimings.totalProcessing);
+    chTMObjectInit(&debugTimings.oneSecond);
 
     memset(&mp45dt02I2SConfig, 0, sizeof(mp45dt02I2SConfig));
 
@@ -367,12 +393,12 @@ void mp45dt02Init(void)
                 1<<30 |
                 5<<27;
 
+
     /* output PLLI2S to PC9 MCO2*/
     palSetPadMode(GPIOC, 9,
                   PAL_MODE_ALTERNATE(0) |
                   PAL_STM32_OTYPE_PUSHPULL |
                   PAL_STM32_OSPEED_HIGHEST);
-
 
 
     i2sStart(&MP45DT02_I2S_DRIVER, &mp45dt02I2SConfig);
