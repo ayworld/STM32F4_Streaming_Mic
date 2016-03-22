@@ -42,8 +42,8 @@ import struct
 # Configuration 
 ################################################################################
 
-dir_plots = "./output/comparison/plots/"
-dir_files = "./output/comparison/files/"
+dir_plots = "./output/plots/"
+dir_files = "./output/files/"
 show_plots = True
 
 file_gdb = sys.argv[1]
@@ -54,12 +54,6 @@ sampling_f = 16000
 def show_plot(plot):
     if show_plots:
         plot.show()
-
-def get_gdb_struct_variable(struct, var, data):
-    struct = struct + "\s+=\s+{(.*?)}"
-    var = var + "\s+=\s+(\w+),"
-    struct = re.compile(struct, re.DOTALL).search(data).group(1)
-    return re.compile(var, re.DOTALL).search(struct).group(1)
 
 def get_gdb_array(arr, data):
     arr = arr + "\s+=\s+{(.*?)}"
@@ -73,23 +67,6 @@ def get_arm_signal(gdb_file):
     signal = get_gdb_array("buffer", data)
 
     return signal 
-
-def table_print(title, label_keys, label_0, label_1, dict_0, dict_1):
-    global file_h
-
-    width = 25
-    print >> file_h, "\n\n"
-    print >> file_h, "|" + "-" * (width * 3 + 2) + "|"
-    print >> file_h, "| " + title.ljust(width * 3 + 1) + "|"
-    print >> file_h, "|" + "-" * (width * 3 + 2) + "|"
-    print >> file_h, "|%s|%s|%s|" %(label_keys.ljust(width), label_0.ljust(width), label_1.ljust(width))
-
-    for k in dict_0:
-        print >> file_h, "|%s|%s|%s|" % (k.ljust(width), 
-                            str(dict_0[k]).ljust(width),
-                            str(dict_1[k]).ljust(width))
-    print >> file_h, "|" + "-" * (width * 3 + 2) + "|"
-
 
 ################################################################################
 # Run
@@ -151,7 +128,7 @@ wav_file = dir_files + "output.wave"
 wav = wave.open(wav_file, "w")
 wav.setparams((1,                   # nchannels
                2,                   # sampwidth
-               16000,               # framerate 
+               sampling_f,          # framerate 
                0,                   # nframes
                "NONE",              # comptype
                "not compressed"     # compname
@@ -173,6 +150,5 @@ wav.close()
 wav = wave.open(wav_file, "r")
 print wav.getparams()
 wav.close()
-
 
 

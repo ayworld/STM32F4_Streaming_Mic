@@ -277,6 +277,7 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
                             MP45DT02_RAW_SAMPLE_DURATION_MS)
         {
             i2sStopExchange(&MP45DT02_I2S_DRIVER);
+            LED_ORANGE_CLEAR();
 
             while (1)
             {
@@ -291,6 +292,7 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
                     LED_BLUE_CLEAR();
                     memset(&output, 0, sizeof(output));
                     i2sStartExchange(&MP45DT02_I2S_DRIVER);
+                    LED_ORANGE_SET();
                     break;
                 }
             }
