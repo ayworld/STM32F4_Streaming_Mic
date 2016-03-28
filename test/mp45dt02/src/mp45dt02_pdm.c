@@ -1,5 +1,5 @@
 /*******************************************************************************
-* Copyright (c) 2014, Alan Barr
+* Copyright (c) 2016, Alan Barr
 * All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
@@ -195,6 +195,30 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
                         MP45DT02_EXTRAPOLATED_BUFFER_SIZE);
         }
 
+#if 0
+        /* XXX AB DEBUG */
+        i2sStopExchange(&MP45DT02_I2S_DRIVER);
+
+        mp45dt02I2sData.buffer[0] = 0x55;
+        mp45dt02I2sData.buffer[1] = 0x55;
+        mp45dt02I2sData.buffer[2] = 0x55;
+        mp45dt02I2sData.buffer[3] = 0x55;
+
+        for (i = 0; i < mp45dt02I2sData.number; i++)
+        {
+            if (i%2)
+            {
+                mp45dt02I2sData.buffer[i] = 0xAAAA;
+            }
+            else
+            {
+                mp45dt02I2sData.buffer[i] = 0x00;
+            }
+
+            mp45dt02I2sData.buffer[i] = 0;
+        }
+#endif
+
         /* Move each bit from each uint16_t word to uint16_t array element. */
         /* AB TODO assumption - data is MSB first - Soooo
          * We move least significant bits first. The are last sampled however,
@@ -204,9 +228,9 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
             i < mp45dt02I2sData.number * MP45DT02_I2S_WORD_SIZE_BITS;
             i++)
         {
-            uint16_t modifiedCurrentWord = 0;
+            uint16_t modifiedCurrentWord;
 
-            if (i % MP45DT02_I2S_WORD_SIZE_BITS)
+            if ((i % MP45DT02_I2S_WORD_SIZE_BITS) == 0)
             {
                 modifiedCurrentWord =
                     mp45dt02I2sData.buffer[mp45dt02I2sData.offset +
@@ -277,7 +301,7 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
                             MP45DT02_RAW_SAMPLE_DURATION_MS)
         {
             i2sStopExchange(&MP45DT02_I2S_DRIVER);
-            LED_ORANGE_CLEAR();
+            LED_ORANGE_CLEAR(); /* Breakpoint */
 
             while (1)
             {
@@ -376,6 +400,7 @@ void mp45dt02Init(void)
     /* ALAN TODO - move pin setup to board.h */
     palSetPadMode(MP45DT02_PDM_PORT, MP45DT02_PDM_PAD,
                   PAL_MODE_ALTERNATE(5)     |
+                  PAL_STM32_OTYPE_PUSHPULL  |
                   PAL_STM32_OSPEED_HIGHEST);
 
     palSetPadMode(MP45DT02_CLK_PORT, MP45DT02_CLK_PAD,
@@ -383,24 +408,39 @@ void mp45dt02Init(void)
                   PAL_STM32_OTYPE_PUSHPULL  |
                   PAL_STM32_OSPEED_HIGHEST);
 
-    mp45dt02I2SConfig.tx_buffer = NULL;
-    mp45dt02I2SConfig.rx_buffer = mp45dt02I2sData.buffer;
-    mp45dt02I2SConfig.size      = MP45DT02_I2S_BUFFER_SIZE_2B;
-    mp45dt02I2SConfig.end_cb    = mp45dt02Cb;
-    mp45dt02I2SConfig.i2scfgr   = SPI_I2SCFGR_I2SSTD_1 | SPI_I2SCFGR_CKPOL;
-    mp45dt02I2SConfig.i2spr     = (SPI_I2SPR_I2SDIV & MP45DT02_I2SDIV) |
-                                  (SPI_I2SPR_ODD & (MP45DT02_I2SODD << I2SODD_SHIFT));
-
+#if 1
     RCC->CFGR = (RCC->CFGR & ~(0x1F<<27)) |
                 1<<30 |
                 5<<27;
-
 
     /* output PLLI2S to PC9 MCO2*/
     palSetPadMode(GPIOC, 9,
                   PAL_MODE_ALTERNATE(0) |
                   PAL_STM32_OTYPE_PUSHPULL |
                   PAL_STM32_OSPEED_HIGHEST);
+#endif
+
+    #define I2SCFG_MODE_MASTER_RECEIVE  (SPI_I2SCFGR_I2SCFG_0 | SPI_I2SCFGR_I2SCFG_1)
+    #define I2SCFG_STD_I2S              (0)
+    #define I2SCFG_STD_LSB_JUSTIFIED    (SPI_I2SCFGR_I2SSTD_1)
+    #define I2SCFG_STD_MSB_JUSTIFIED    (SPI_I2SCFGR_I2SSTD_0)
+    #define I2SCFG_STD_PCM              (SPI_I2SCFGR_I2SSTD_0 | SPI_I2SCFGR_I2SSTD_1)
+    #define I2SCFG_CKPOL_STEADY_LOW     (0)
+    #define I2SCFG_CKPOL_STEADY_HIGH    (SPI_I2SCFGR_CKPOL)
+
+
+    mp45dt02I2SConfig.tx_buffer = NULL;
+    mp45dt02I2SConfig.rx_buffer = mp45dt02I2sData.buffer;
+    mp45dt02I2SConfig.size      = MP45DT02_I2S_BUFFER_SIZE_2B;
+    mp45dt02I2SConfig.end_cb    = mp45dt02Cb;
+
+    mp45dt02I2SConfig.i2scfgr   = I2SCFG_MODE_MASTER_RECEIVE    |
+                                  I2SCFG_STD_MSB_JUSTIFIED      |
+                                  I2SCFG_CKPOL_STEADY_HIGH;
+
+    mp45dt02I2SConfig.i2spr     = (SPI_I2SPR_I2SDIV & MP45DT02_I2SDIV) |
+                                  (SPI_I2SPR_ODD & (MP45DT02_I2SODD << I2SODD_SHIFT));
+
 
 
     i2sStart(&MP45DT02_I2S_DRIVER, &mp45dt02I2SConfig);

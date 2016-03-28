@@ -7,6 +7,7 @@ fi
 project_root=.
 chibios_path=${project_root}/lib/ChibiOS
 proj_path=${project_root}/src
+test_path=${project_root}/test
 sys_path=/usr/lib/gcc/arm-none-eabi
 files_list="${project_root}/cscope.files"
 
@@ -72,6 +73,11 @@ search_proj ()
     get_c_files $proj_path $files_list
 }
 
+search_test () 
+{
+    get_c_files $test_path $files_list
+}
+
 search_sys ()
 {
     get_c_files $sys_path $files_list
@@ -80,6 +86,7 @@ search_sys ()
 rm -f $files_list
 search_chibios
 search_proj
+search_test
 search_sys
 cscope -b -k
 rm -f $files_list

@@ -1,3 +1,4 @@
+#! /usr/bin/env python2
 ################################################################################
 # Copyright (c) 2016, Alan Barr
 # All rights reserved.
