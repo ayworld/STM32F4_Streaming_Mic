@@ -8,7 +8,7 @@ cd -
 # WORKING
 
 # From root openocd
-openocd -f board/stm32f4discovery.cfg
+openocd -f board/stm32f4discovery.cfg -f interface/stlink-v2-1.cfg -c "stm32f4x.cpu configure -rtos ChibiOS"
 
 # In another terminal 
 arm-none-eabi-gdb -x utils/gdb_openocd.cfg

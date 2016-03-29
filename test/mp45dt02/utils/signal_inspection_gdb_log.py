@@ -44,7 +44,7 @@ import struct
 ################################################################################
 
 dir_plots = "./output/plots/"
-dir_files = "./output/files/"
+dir_files = "./output/audio/"
 show_plots = True
 
 file_gdb = sys.argv[1]
@@ -79,8 +79,6 @@ if not os.path.exists(dir_plots):
 
 if not os.path.exists(dir_files):
     os.makedirs(dir_files)
-
-file_h = open(dir_files + "/output.txt", "w")
 
 ################################################################################
 # Signal
@@ -125,7 +123,7 @@ plot.close()
 ################################################################################
 # Create WAV File 
 ################################################################################
-wav_file = dir_files + "output.wave"
+wav_file = dir_files + "recorded.wave"
 wav = wave.open(wav_file, "w")
 wav.setparams((1,                   # nchannels
                2,                   # sampwidth
