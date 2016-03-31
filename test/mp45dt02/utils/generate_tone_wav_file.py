@@ -31,19 +31,32 @@ import os
 import struct
 import operator
 
-dir_files           = "./output/audio/"
+################################################################################
+# Docs
+# Creates a wave file of specified sinusoidal waves.
+################################################################################
+
+################################################################################
+# Configuration
+################################################################################
+# The list of frequencies to be superimposed in the output wave form
 freqs               = [500, 2000, 4000, 7000, 10000, 11000]
+# Output Directory
+dir_files           = "./output/audio/"
+# Sampling frequency of output wave file
 sampling_freq       = 32000
+# Playback duration of output wave file
 sampling_duration   = 10
-sampling_number     = sampling_duration * sampling_freq
+# Output file name
+wav_file = dir_files + "tones.wave"
 
 ################################################################################
 
 if not os.path.exists(dir_files):
     os.makedirs(dir_files)
 
+sampling_number = sampling_duration * sampling_freq
 
-wav_file = dir_files + "tones.wave"
 ################################################################################
 t = np.arange(sampling_number) / float(sampling_freq)
 
