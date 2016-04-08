@@ -43,8 +43,8 @@ import struct
 # Configuration 
 ################################################################################
 
-dir_plots = "./output/plots/"
-dir_files = "./output/audio/"
+dir_plots = "./output/inspection/plots/"
+dir_files = "./output/inspection/audio/"
 show_plots = True
 
 file_gdb = sys.argv[1]
@@ -91,7 +91,7 @@ plot.grid()
 plot.title("Filtered Signal")
 plot.xlabel("Sample Number")
 plot.ylabel("Amplitude")
-plot.savefig(dir_plots + "1_x_signal.png")
+plot.savefig(dir_plots + "1_signal.png")
 
 show_plot(plot)
 plot.close()
@@ -114,7 +114,7 @@ plot.grid()
 plot.title("FFT of Filtered Signal")
 plot.xlabel("Frequency [Hz]")
 plot.ylabel("Power")
-plot.savefig(dir_plots + "2_x_signal_fft.png")
+plot.savefig(dir_plots + "2_signal_fft.png")
 
 show_plot(plot)
 plot.close()

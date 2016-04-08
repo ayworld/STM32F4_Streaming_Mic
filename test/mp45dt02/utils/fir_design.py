@@ -36,8 +36,6 @@ import time
 ##### Configuration ##### 
 ################################################################################
 
-np.random.seed(42)
-
 dir_text  = "./output/design/files/"
 dir_plots = "./output/design/plots/"
 

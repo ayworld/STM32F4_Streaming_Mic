@@ -42,7 +42,7 @@ import operator
 # The list of frequencies to be superimposed in the output wave form
 freqs               = [500, 2000, 4000, 7000, 10000, 11000]
 # Output Directory
-dir_files           = "./output/audio/"
+dir_files           = "./output/test/audio/"
 # Sampling frequency of output wave file
 sampling_freq       = 32000
 # Playback duration of output wave file
