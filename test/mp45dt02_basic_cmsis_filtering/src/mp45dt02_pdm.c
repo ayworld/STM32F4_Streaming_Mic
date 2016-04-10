@@ -111,7 +111,6 @@ static struct {
     uint32_t guard;
 } mp45dt02I2sData;
 
-/* AB TODO better name. Holds DSP words with 1 bit samples. */
 static float32_t mp45dt02ExtrapolatedBuffer[MP45DT02_EXTRAPOLATED_BUFFER_SIZE];
 static float32_t mp45dt02DecimatedBuffer[MP45DT02_DECIMATED_BUFFER_SIZE];
 
@@ -167,11 +166,7 @@ static void extrapolate(float32_t *outBuffer,
                     MP45DT02_EXTRAPOLATED_BUFFER_SIZE);
     }
 
-    /* Move each bit from each uint16_t word to uint16_t array element. */
-    /* AB TODO assumption - data is MSB first - Soooo
-     * We move least significant bits first. The are last sampled however,
-     * and this we populate the end of the array first. */
-
+    /* Move each bit from each uint16_t word to an element of output array. */
     for(i=0, extrapolatedIndex = 0, bitsInWord = MP45DT02_I2S_WORD_SIZE_BITS;
         i < inBufferLength * MP45DT02_I2S_WORD_SIZE_BITS;
         i++)
@@ -206,8 +201,6 @@ static void extrapolate(float32_t *outBuffer,
                     extrapolatedIndex,
                     outBufferLength);
     }
-
-
 }
 
 static THD_FUNCTION(mp45dt02ProcessingThd, arg)
@@ -256,6 +249,7 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
                              MP45DT02_EXTRAPOLATED_BUFFER_SIZE);
 
         chTMStopMeasurementX(&debugTimings.decimate);
+
         /**********************************************************************/ 
         /* Handling Output */
         /**********************************************************************/ 
@@ -310,14 +304,7 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
         {
             PRINT_ERROR("Overflow detected.",0);
         }
-
     }
-}
-
-void HardFault_Handler(void) 
-{
-    LED_RED_SET();
-    while (true);
 }
 
 /* (*i2scallback_t) */
@@ -387,7 +374,6 @@ void mp45dt02Init(void)
 
     output.guard = MEMORY_GUARD;
 
-#if 1
     palSetPadMode(MP45DT02_PDM_PORT, MP45DT02_PDM_PAD,
                   PAL_MODE_ALTERNATE(5)     |
                   PAL_STM32_OTYPE_PUSHPULL  |
@@ -398,9 +384,8 @@ void mp45dt02Init(void)
                   PAL_STM32_OTYPE_PUSHPULL  |
                   PAL_STM32_OSPEED_HIGHEST);
 
-#endif
-
 #if 0
+    /* Debug: Output clock to pin. */
     RCC->CFGR = (RCC->CFGR & ~(0x1F<<27)) |
                 1<<30 |
                 5<<27;

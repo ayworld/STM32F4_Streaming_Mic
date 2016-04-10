@@ -30,7 +30,6 @@
 
 static mutex_t serialPrintMtx;
 
-
 void debugInit(void)
 {
     /* Configure Debug Serial */
@@ -53,5 +52,11 @@ void debugSerialPrint(const char * fmt, ...)
     chvprintf((BaseSequentialStream*)&SERIAL_PRINT_DRIVER, fmt, ap);
     chMtxUnlock(&serialPrintMtx);
     va_end(ap);
+}
+
+void HardFault_Handler(void) 
+{
+    LED_RED_SET();
+    while (true);
 }
 
