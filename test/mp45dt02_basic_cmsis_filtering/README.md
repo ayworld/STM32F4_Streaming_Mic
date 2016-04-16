@@ -22,16 +22,18 @@ to give 16 kHz PCM output. To achieve this the following values are set:
 
 # Operation Notes: 
 
-1. Configured to capture 2 ms of 1024 kHz I2S data between interrupts.
-   I2S buffer needs to hold a total of 4 ms worth of data due to interrupts
+1. Configured to capture 1 ms of 1024 kHz I2S data between interrupts.
+   I2S buffer needs to hold a total of 2 ms worth of data due to interrupts
    occuring at buffer half full.  
-   I2S buffer to hold a total of 4096 1-bit samples (spread over 256
+   I2S buffer to hold a total of 2048 1-bit samples (spread over 128
    uint16_t's).
 
-2. When an I2S interrupt occurs, each I2S sampled bit is extrapolated into floats
-   (where each float represents 1 bit). This requires 2048 floats.
+2. When an I2S interrupt occurs, each I2S sampled bit is "expanded" - moved from
+   existing within a bitfield in the I2S data into a float. This requires 1024
+   floats.
 
-3. This is filtered and decimated by a factor of 64 to produce 32 floats.
+3. This is filtered and decimated by a factor of 64 to produce a 1 ms sample of
+   16 floats.
 
 4. These are added to the output buffer which stores 1 s of audio (16,000
    floats).

@@ -61,7 +61,7 @@
 /* Frequency at which the MP45DT02 is being (over) sampled. */
 #define MP45DT02_RAW_FREQ_KHZ               1024
 /* One raw sample provided to processing.*/
-#define MP45DT02_RAW_SAMPLE_DURATION_MS     2 
+#define MP45DT02_RAW_SAMPLE_DURATION_MS     2
 
 /* The number of bits in I2S word */
 #define MP45DT02_I2S_WORD_SIZE_BITS         16
@@ -80,12 +80,12 @@
 /* Every bit in I2S signal needs to be expanded out into a word. */
 /* Note: I2S Interrupts are always fired at half/full buffer point. Thus
  * processed buffers require to be 0.5 * bits in one I2S buffer */
-#define MP45DT02_EXTRAPOLATED_BUFFER_SIZE   (MP45DT02_I2S_SAMPLE_SIZE_BITS)
+#define MP45DT02_EXPANDED_BUFFER_SIZE       (MP45DT02_I2S_SAMPLE_SIZE_BITS)
 
 /* Desired decimation factor */
 #define MP45DT02_FIR_DECIMATION_FACTOR      64
 /* Buffer size of the decimated sample */
-#define MP45DT02_DECIMATED_BUFFER_SIZE      (MP45DT02_EXTRAPOLATED_BUFFER_SIZE/ MP45DT02_FIR_DECIMATION_FACTOR)
+#define MP45DT02_DECIMATED_BUFFER_SIZE      (MP45DT02_EXPANDED_BUFFER_SIZE/ MP45DT02_FIR_DECIMATION_FACTOR)
 
 /* Number of samples to collect */
 #define MP45DT02_OUTPUT_BUFFER_DURATION_MS  1600
@@ -111,12 +111,12 @@ static struct {
     uint32_t guard;
 } mp45dt02I2sData;
 
-static float32_t mp45dt02ExtrapolatedBuffer[MP45DT02_EXTRAPOLATED_BUFFER_SIZE];
+static float32_t mp45dt02ExpandedBuffer[MP45DT02_EXPANDED_BUFFER_SIZE];
 static float32_t mp45dt02DecimatedBuffer[MP45DT02_DECIMATED_BUFFER_SIZE];
 
 static struct {
     arm_fir_decimate_instance_f32 decimateInstance;
-    float32_t state[FIR_COEFFS_LEN + MP45DT02_EXTRAPOLATED_BUFFER_SIZE - 1];
+    float32_t state[FIR_COEFFS_LEN + MP45DT02_EXPANDED_BUFFER_SIZE - 1];
     uint32_t guard;
 } cmsisDsp;
 
@@ -136,7 +136,7 @@ static struct {
 
 
 /* 
- * outBuffer length: MP45DT02_EXTRAPOLATED_BUFFER_SIZE
+ * outBuffer length: MP45DT02_EXPANDED_BUFFER_SIZE
  */
 static void extrapolate(float32_t *outBuffer,
                         const uint16_t *inBuffer,
@@ -148,22 +148,22 @@ static void extrapolate(float32_t *outBuffer,
     uint32_t outBufferLength = 0;
     uint16_t modifiedCurrentWord = 0;
 
-    memset(outBuffer, 0, sizeof(MP45DT02_EXTRAPOLATED_BUFFER_SIZE));
+    memset(outBuffer, 0, sizeof(MP45DT02_EXPANDED_BUFFER_SIZE));
 
     outBufferLength = inBufferLength * MP45DT02_I2S_WORD_SIZE_BITS;
 
-    if (outBufferLength != MP45DT02_EXTRAPOLATED_BUFFER_SIZE)
+    if (outBufferLength != MP45DT02_EXPANDED_BUFFER_SIZE)
     {
         PRINT_ERROR("Got more samples (%u) than expecting (%u)",
                     outBufferLength,
-                    MP45DT02_EXTRAPOLATED_BUFFER_SIZE);
+                    MP45DT02_EXPANDED_BUFFER_SIZE);
     }
 
-    if (outBufferLength != MP45DT02_EXTRAPOLATED_BUFFER_SIZE)
+    if (outBufferLength != MP45DT02_EXPANDED_BUFFER_SIZE)
     {
         PRINT_ERROR("Size wasn't as expected (%u) than expecting (%u)",
                     outBufferLength,
-                    MP45DT02_EXTRAPOLATED_BUFFER_SIZE);
+                    MP45DT02_EXPANDED_BUFFER_SIZE);
     }
 
     /* Move each bit from each uint16_t word to an element of output array. */
@@ -232,7 +232,7 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
         /**********************************************************************/ 
         chTMStartMeasurementX(&debugTimings.extrapolation);
 
-        extrapolate(mp45dt02ExtrapolatedBuffer,
+        extrapolate(mp45dt02ExpandedBuffer,
                     &mp45dt02I2sData.buffer[mp45dt02I2sData.offset],
                     mp45dt02I2sData.number);
 
@@ -244,9 +244,9 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
         chTMStartMeasurementX(&debugTimings.decimate);
 
         arm_fir_decimate_f32(&cmsisDsp.decimateInstance,
-                             mp45dt02ExtrapolatedBuffer,
+                             mp45dt02ExpandedBuffer,
                              mp45dt02DecimatedBuffer,
-                             MP45DT02_EXTRAPOLATED_BUFFER_SIZE);
+                             MP45DT02_EXPANDED_BUFFER_SIZE);
 
         chTMStopMeasurementX(&debugTimings.decimate);
 
@@ -282,6 +282,10 @@ static THD_FUNCTION(mp45dt02ProcessingThd, arg)
 
                 if (palReadPad(GPIOA, GPIOA_BUTTON))
                 {
+                    chThdSleepMilliseconds(10);
+                    while (palReadPad(GPIOA, GPIOA_BUTTON));
+                    chThdSleepMilliseconds(200);
+
                     LED_BLUE_CLEAR();
                     memset(output.buffer, 0, sizeof(output.buffer));
                     output.count = 0;
@@ -336,7 +340,7 @@ void dspInit(void)
                                             MP45DT02_FIR_DECIMATION_FACTOR,
                                             firCoeffs,
                                             cmsisDsp.state,
-                                            MP45DT02_EXTRAPOLATED_BUFFER_SIZE)))
+                                            MP45DT02_EXPANDED_BUFFER_SIZE)))
     {
         PRINT_ERROR("arm_fir_decimate_init_f32 failed with %d", armStatus);
     }
@@ -346,10 +350,10 @@ void mp45dt02Init(void)
 {
     PRINT("Initialising mp45dt02.\n\r"
           "mp45dt02I2sData.buffer size: %u words %u bytes\n\r"
-          "mp45dt02ExtrapolatedBuffer size: %u words %u bytes\n\r"
+          "mp45dt02ExpandedBuffer size: %u words %u bytes\n\r"
           "MP45DT02_DECIMATED_BUFFER_SIZE: %u",
           MP45DT02_I2S_BUFFER_SIZE_2B, sizeof(mp45dt02I2sData.buffer),
-          MP45DT02_EXTRAPOLATED_BUFFER_SIZE, sizeof(mp45dt02ExtrapolatedBuffer),
+          MP45DT02_EXPANDED_BUFFER_SIZE, sizeof(mp45dt02ExpandedBuffer),
           MP45DT02_DECIMATED_BUFFER_SIZE);
 
     chSemObjectInit(&mp45dt02ProcessingSem, 0);

@@ -217,7 +217,7 @@ UADEFS =
 UINCDIR = 
 
 # List the user directory to look for the libraries here
-ULIBDIR = $(CMSIS)/Lib/GCC
+ULIBDIR =
 
 # List all user libraries here
 ULIBS = 
